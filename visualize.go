@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"image"
 	"image/color"
 	"math"
@@ -33,7 +34,7 @@ type Visualizer struct {
 func NewVisualizer(space *Space3D) *Visualizer {
 	vis := &Visualizer{
 		space:     space,
-		pointSize: 5,
+		pointSize: 10,
 		width:     800,
 		height:    600,
 		scale:     50,
@@ -82,7 +83,7 @@ func (v *Visualizer) project3DTo2D(point Point3D) (float32, float32) {
 func (v *Visualizer) Run() {
 	v.app = app.New()
 	v.window = v.app.NewWindow("3D Points Visualizer")
-	v.window.Resize(fyne.NewSize(v.width, v.height))
+	v.window.Resize(fyne.NewSize(1000, 800))
 
 	// Create a canvas to draw on
 	canvasObj := canvas.NewRaster(func(w, h int) image.Image {
@@ -103,18 +104,37 @@ func (v *Visualizer) Run() {
 		for _, point := range v.space.Points {
 			screenX, screenY := v.project3DTo2D(point)
 
-			// Draw a point (tiny circle)
+			// Draw a point with border
 			size := int(v.pointSize)
+
+			// Draw border (black outline)
+			borderSize := size + 2
+			for y := -borderSize; y <= borderSize; y++ {
+				for x := -borderSize; x <= borderSize; x++ {
+					if x*x+y*y <= borderSize*borderSize {
+						px, py := int(screenX)+x, int(screenY)+y
+						if px >= 0 && px < w && py >= 0 && py < h {
+							img.Set(px, py, color.RGBA{0, 0, 0, 255})
+						}
+					}
+				}
+			}
+
+			// Draw inner circle (blue)
 			for y := -size; y <= size; y++ {
 				for x := -size; x <= size; x++ {
 					if x*x+y*y <= size*size {
 						px, py := int(screenX)+x, int(screenY)+y
 						if px >= 0 && px < w && py >= 0 && py < h {
-							img.Set(px, py, color.RGBA{0, 0, 255, 255})
+							img.Set(px, py, color.RGBA{30, 144, 255, 255})
 						}
 					}
 				}
 			}
+
+			// Draw coordinates
+			coordStr := formatCoord(point)
+			drawString(img, coordStr, int(screenX)+size+5, int(screenY)-5, color.RGBA{50, 50, 50, 255})
 		}
 
 		return img
@@ -147,15 +167,25 @@ func (v *Visualizer) Run() {
 	}
 
 	// Layout
-	controls := container.New(layout.NewVBoxLayout(),
-		container.New(layout.NewHBoxLayout(), widget.NewLabel("X Rotation:"), xRotSlider),
-		container.New(layout.NewHBoxLayout(), widget.NewLabel("Y Rotation:"), yRotSlider),
-		container.New(layout.NewHBoxLayout(), widget.NewLabel("Z Rotation:"), zRotSlider),
-		container.New(layout.NewHBoxLayout(), widget.NewLabel("Scale:"), scaleSlider),
+	rotationCard := widget.NewCard("Rotation Controls", "",
+		container.New(layout.NewVBoxLayout(),
+			container.NewPadded(container.New(layout.NewFormLayout(), widget.NewLabel("X:"), xRotSlider)),
+			container.NewPadded(container.New(layout.NewFormLayout(), widget.NewLabel("Y:"), yRotSlider)),
+			container.NewPadded(container.New(layout.NewFormLayout(), widget.NewLabel("Z:"), zRotSlider)),
+		),
+	)
+
+	scaleCard := widget.NewCard("Display Settings", "",
+		container.NewPadded(container.New(layout.NewFormLayout(), widget.NewLabel("Scale:"), scaleSlider)),
+	)
+
+	controls := container.New(layout.NewHBoxLayout(),
+		container.NewPadded(rotationCard),
+		container.NewPadded(scaleCard),
 	)
 
 	content := container.New(layout.NewBorderLayout(nil, controls, nil, nil),
-		controls, canvasObj)
+		canvasObj, controls)
 
 	v.window.SetContent(content)
 	v.window.ShowAndRun()
@@ -191,6 +221,203 @@ func drawLine(img *image.RGBA, x1, y1, x2, y2 int, clr color.RGBA) {
 			y1 += sy
 		}
 	}
+}
+
+// formatCoord returns a formatted string of point coordinates
+func formatCoord(p Point3D) string {
+	return fmt.Sprintf("(%.1f, %.1f, %.1f)", p.X, p.Y, p.Z)
+}
+
+// drawString draws a string on the image
+func drawString(img *image.RGBA, s string, x, y int, clr color.RGBA) {
+	// Simple font map for basic characters (very basic implementation)
+	fontMap := map[rune][]string{
+		'0': {
+			" ### ",
+			"#   #",
+			"#   #",
+			"#   #",
+			"#   #",
+			" ### ",
+		},
+		'1': {
+			"  #  ",
+			" ##  ",
+			"  #  ",
+			"  #  ",
+			"  #  ",
+			" ### ",
+		},
+		'2': {
+			" ### ",
+			"#   #",
+			"   # ",
+			"  #  ",
+			" #   ",
+			"#####",
+		},
+		'3': {
+			" ### ",
+			"#   #",
+			"  ## ",
+			"    #",
+			"#   #",
+			" ### ",
+		},
+		'4': {
+			"   # ",
+			"  ## ",
+			" # # ",
+			"#  # ",
+			"#####",
+			"   # ",
+		},
+		'5': {
+			"#####",
+			"#    ",
+			"#### ",
+			"    #",
+			"#   #",
+			" ### ",
+		},
+		'6': {
+			" ### ",
+			"#    ",
+			"#### ",
+			"#   #",
+			"#   #",
+			" ### ",
+		},
+		'7': {
+			"#####",
+			"    #",
+			"   # ",
+			"  #  ",
+			" #   ",
+			"#    ",
+		},
+		'8': {
+			" ### ",
+			"#   #",
+			" ### ",
+			"#   #",
+			"#   #",
+			" ### ",
+		},
+		'9': {
+			" ### ",
+			"#   #",
+			"#   #",
+			" ####",
+			"    #",
+			" ### ",
+		},
+		'.': {
+			"     ",
+			"     ",
+			"     ",
+			"     ",
+			"     ",
+			"  #  ",
+		},
+		'-': {
+			"     ",
+			"     ",
+			"#####",
+			"     ",
+			"     ",
+			"     ",
+		},
+		',': {
+			"     ",
+			"     ",
+			"     ",
+			"     ",
+			"  #  ",
+			" #   ",
+		},
+		'(': {
+			"  #  ",
+			" #   ",
+			"#    ",
+			"#    ",
+			" #   ",
+			"  #  ",
+		},
+		')': {
+			"  #  ",
+			"   # ",
+			"    #",
+			"    #",
+			"   # ",
+			"  #  ",
+		},
+		' ': {
+			"     ",
+			"     ",
+			"     ",
+			"     ",
+			"     ",
+			"     ",
+		},
+	}
+
+	// Set default patterns for any undefined characters
+	defaultPattern := []string{
+		"#####",
+		"#   #",
+		"#   #",
+		"#   #",
+		"#   #",
+		"#####",
+	}
+
+	// Character width and height
+	charWidth := 5
+	charHeight := 6
+	spacing := 1
+
+	// Draw background for better readability
+	bgPadding := 2
+	bgWidth := len(s)*(charWidth+spacing) + bgPadding*2
+	// Calculate background dimensions
+
+	// Draw semi-transparent background
+	for by := y - bgPadding; by < y+charHeight+bgPadding; by++ {
+		for bx := x - bgPadding; bx < x+bgWidth; bx++ {
+			if bx >= 0 && bx < img.Bounds().Max.X && by >= 0 && by < img.Bounds().Max.Y {
+				img.Set(bx, by, color.RGBA{240, 240, 240, 220})
+			}
+		}
+	}
+
+	// Draw each character
+	for i, char := range s {
+		pattern, ok := fontMap[char]
+		if !ok {
+			pattern = defaultPattern
+		}
+
+		for dy := 0; dy < charHeight; dy++ {
+			if dy < len(pattern) {
+				for dx := 0; dx < charWidth; dx++ {
+					px := x + i*(charWidth+spacing) + dx
+					py := y + dy
+
+					if px >= 0 && px < img.Bounds().Max.X && py >= 0 && py < img.Bounds().Max.Y {
+						if dx < len(pattern[dy]) && pattern[dy][dx] == '#' {
+							img.Set(px, py, clr)
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
+// drawText measures the width of text
+func drawText(img *image.RGBA, p Point3D, x, y int) int {
+	return len(formatCoord(p)) * 6
 }
 
 func abs(x int) int {
