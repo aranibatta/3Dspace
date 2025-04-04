@@ -61,6 +61,8 @@ func NewVisualizer(space *Space3D) *Visualizer {
 		rotateMode: true,
 		panMode:    false,
 		rKeyPressed: false,
+		hoverX:     0,
+		hoverY:     0,
 	}
 	return vis
 }
@@ -126,6 +128,13 @@ func (v *Visualizer) handleMouseUp() {
 
 // Custom MouseMoved event handler
 func (v *Visualizer) handleMouseMove(ev *desktop.MouseEvent) {
+	// Always update hover position
+	v.hoverX = float64(ev.Position.X)
+	v.hoverY = float64(ev.Position.Y)
+	
+	// Refresh to update hover effects
+	v.canvasObj.Refresh()
+	
 	if !v.isDragging {
 		return
 	}
@@ -352,10 +361,35 @@ func (v *Visualizer) Run() {
 				}
 			}
 
-			// Draw coordinates
-			coordStr := formatCoord(point)
-			drawString(img, coordStr, int(screenX)+size+5, int(screenY)-5, color.RGBA{50, 50, 50, 255})
+			// Check if mouse is near the point
+			mouseX, mouseY := int(v.hoverX), int(v.hoverY)
+			pointX, pointY := int(screenX), int(screenY)
+			
+			// Simple box-based hover detection with large margins
+			boxSize := size * 5
+			if mouseX >= pointX-boxSize && mouseX <= pointX+boxSize &&
+			   mouseY >= pointY-boxSize && mouseY <= pointY+boxSize {
+				coordStr := formatCoord(point)
+				drawString(img, coordStr, int(screenX)+size+5, int(screenY)-5, color.RGBA{50, 50, 50, 255})
+			}
 		}
+
+		// Draw a cursor indicator to show where the mouse is being tracked
+		cursorSize := 5
+		for y := -cursorSize; y <= cursorSize; y++ {
+			for x := -cursorSize; x <= cursorSize; x++ {
+				if x*x+y*y <= cursorSize*cursorSize {
+					px, py := int(v.hoverX)+x, int(v.hoverY)+y
+					if px >= 0 && px < w && py >= 0 && py < h {
+						img.Set(px, py, color.RGBA{255, 0, 0, 255})
+					}
+				}
+			}
+		}
+
+		// Draw hover position text
+		hoverText := fmt.Sprintf("Mouse: %.1f, %.1f", v.hoverX, v.hoverY)
+		drawString(img, hoverText, 10, 10, color.RGBA{0, 0, 0, 255})
 
 		return img
 	})
@@ -451,6 +485,12 @@ func (c *canvasWrapper) MouseMoved(ev *desktop.MouseEvent) {
 	c.vis.handleMouseMove(ev)
 }
 
+// MouseIn implements desktop.Hoverable
+func (c *canvasWrapper) MouseIn(*desktop.MouseEvent) {}
+
+// MouseOut implements desktop.Hoverable
+func (c *canvasWrapper) MouseOut() {}
+
 // Scrolled implements fyne.Scrollable
 func (c *canvasWrapper) Scrolled(ev *fyne.ScrollEvent) {
 	c.vis.handleScroll(ev)
@@ -458,6 +498,7 @@ func (c *canvasWrapper) Scrolled(ev *fyne.ScrollEvent) {
 
 // Ensure canvasWrapper implements necessary interfaces
 var _ desktop.Mouseable = (*canvasWrapper)(nil)
+var _ desktop.Hoverable = (*canvasWrapper)(nil)
 var _ fyne.Scrollable = (*canvasWrapper)(nil)
 
 // Helper function to check if a point is visible on screen
