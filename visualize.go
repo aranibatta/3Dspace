@@ -5,11 +5,13 @@ import (
 	"image"
 	"image/color"
 	"math"
+	"time"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
 	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
+	"fyne.io/fyne/v2/driver/desktop"
 	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/widget"
 )
@@ -28,21 +30,37 @@ type Visualizer struct {
 	scale     float64
 	xOffset   float64
 	yOffset   float64
+	
+	// For mouse/trackpad interaction
+	isDragging    bool
+	lastMousePosX float64
+	lastMousePosY float64
+	canvasObj     *canvas.Raster
+	hoverX        float64
+	hoverY        float64
+	
+	// Mode flags
+	rotateMode bool
+	panMode    bool
+	rKeyPressed bool
 }
 
 // NewVisualizer creates a new 3D visualizer
 func NewVisualizer(space *Space3D) *Visualizer {
 	vis := &Visualizer{
-		space:     space,
-		pointSize: 10,
-		width:     800,
-		height:    600,
-		scale:     50,
-		xRotation: 0,
-		yRotation: 0,
-		zRotation: 0,
-		xOffset:   0,
-		yOffset:   0,
+		space:      space,
+		pointSize:  10,
+		width:      800,
+		height:     600,
+		scale:      50,
+		xRotation:  0,
+		yRotation:  0,
+		zRotation:  0,
+		xOffset:    0,
+		yOffset:    0,
+		rotateMode: true,
+		panMode:    false,
+		rKeyPressed: false,
 	}
 	return vis
 }
@@ -79,6 +97,103 @@ func (v *Visualizer) project3DTo2D(point Point3D) (float32, float32) {
 	return screenX, screenY
 }
 
+// Custom MouseDown event handler
+func (v *Visualizer) handleMouseDown(ev *desktop.MouseEvent) {
+	v.isDragging = true
+	v.lastMousePosX = float64(ev.Position.X)
+	v.lastMousePosY = float64(ev.Position.Y)
+
+	// R key state is tracked by keyboard handlers
+	if v.rKeyPressed {
+		// R key is pressed - force rotation mode
+		v.rotateMode = true
+		v.panMode = false
+	} else if ev.Button == desktop.MouseButtonSecondary || ev.Modifier == fyne.KeyModifierAlt {
+		// Right mouse button or Option/Alt + click for panning
+		v.rotateMode = false
+		v.panMode = true
+	} else {
+		// Default is left-click for rotation
+		v.rotateMode = true
+		v.panMode = false
+	}
+}
+
+// Custom MouseUp event handler
+func (v *Visualizer) handleMouseUp() {
+	v.isDragging = false
+}
+
+// Custom MouseMoved event handler
+func (v *Visualizer) handleMouseMove(ev *desktop.MouseEvent) {
+	if !v.isDragging {
+		return
+	}
+
+	// Calculate the delta movement
+	deltaX := float64(ev.Position.X) - v.lastMousePosX
+	deltaY := float64(ev.Position.Y) - v.lastMousePosY
+
+	// Update the last position
+	v.lastMousePosX = float64(ev.Position.X)
+	v.lastMousePosY = float64(ev.Position.Y)
+	
+	// Handle based on mode or R key
+	if v.rKeyPressed || v.rotateMode {
+		// Rotation - adjust the rotation based on mouse movement
+		sensitivity := 0.01
+		v.yRotation += deltaX * sensitivity
+		v.xRotation += deltaY * sensitivity
+	} else if v.panMode {
+		// Panning - adjust the offset based on mouse movement
+		v.xOffset += deltaX
+		v.yOffset += deltaY
+	}
+
+	// Refresh the canvas
+	v.canvasObj.Refresh()
+}
+
+// Custom scroll event handler for zooming or rotating
+func (v *Visualizer) handleScroll(ev *fyne.ScrollEvent) {
+	// Check if R key is pressed for rotation
+	if v.rKeyPressed {
+		// R key + scroll for rotation
+		rotationSpeed := 0.1
+		
+		// Vertical scroll (DY) changes X rotation (up/down)
+		if ev.Scrolled.DY != 0 {
+			v.xRotation += float64(ev.Scrolled.DY) * rotationSpeed
+		}
+		
+		// Horizontal scroll (DX) changes Y rotation (left/right)
+		if ev.Scrolled.DX != 0 {
+			v.yRotation += float64(ev.Scrolled.DX) * rotationSpeed
+		}
+	} else {
+		// Normal zoom mode
+		zoomFactor := 1.1
+		
+		if ev.Scrolled.DY < 0 {
+			// Zoom out
+			v.scale /= zoomFactor
+		} else {
+			// Zoom in
+			v.scale *= zoomFactor
+		}
+		
+		// Enforce min/max scale values
+		if v.scale < 5 {
+			v.scale = 5
+		} else if v.scale > 500 {
+			v.scale = 500
+		}
+	}
+	
+	// Refresh the canvas
+	v.canvasObj.Refresh()
+}
+
 // Run starts the visualizer
 func (v *Visualizer) Run() {
 	v.app = app.New()
@@ -86,8 +201,12 @@ func (v *Visualizer) Run() {
 	v.window.Resize(fyne.NewSize(1000, 800))
 
 	// Create a canvas to draw on
-	canvasObj := canvas.NewRaster(func(w, h int) image.Image {
+	v.canvasObj = canvas.NewRaster(func(w, h int) image.Image {
 		img := image.NewRGBA(image.Rect(0, 0, w, h))
+
+		// Update width and height based on current canvas size
+		v.width = float32(w)
+		v.height = float32(h)
 
 		// Draw a light gray background
 		for y := 0; y < h; y++ {
@@ -96,9 +215,110 @@ func (v *Visualizer) Run() {
 			}
 		}
 
-		// Draw axes
-		drawLine(img, int(v.width/2), 0, int(v.width/2), h, color.RGBA{200, 200, 200, 255})
-		drawLine(img, 0, int(v.height/2), w, int(v.height/2), color.RGBA{200, 200, 200, 255})
+		// Draw 3D grid across all three planes
+		gridSize := 5
+		gridStep := 1.0
+		
+		// Colors for the different plane grids
+		xzGridColor := color.RGBA{180, 180, 180, 160}  // Floor - light gray
+		xyGridColor := color.RGBA{180, 180, 220, 120}  // Side wall - light blue tint
+		yzGridColor := color.RGBA{220, 180, 180, 120}  // Side wall - light red tint
+		
+		// 1. XZ Plane (Floor) grid
+		for i := -gridSize; i <= gridSize; i++ {
+			for j := -gridSize; j <= gridSize; j++ {
+				p1 := NewPoint3D(float64(i)*gridStep, 0, float64(j)*gridStep)
+				p2 := NewPoint3D(float64(i+1)*gridStep, 0, float64(j)*gridStep)
+				p3 := NewPoint3D(float64(i)*gridStep, 0, float64(j+1)*gridStep)
+				
+				x1, y1 := v.project3DTo2D(p1)
+				x2, y2 := v.project3DTo2D(p2)
+				x3, y3 := v.project3DTo2D(p3)
+				
+				// Only draw if within screen bounds
+				if isVisible(int(x1), int(y1), w, h) && isVisible(int(x2), int(y2), w, h) {
+					drawLine(img, int(x1), int(y1), int(x2), int(y2), xzGridColor)
+				}
+				
+				if isVisible(int(x1), int(y1), w, h) && isVisible(int(x3), int(y3), w, h) {
+					drawLine(img, int(x1), int(y1), int(x3), int(y3), xzGridColor)
+				}
+			}
+		}
+		
+		// 2. XY Plane (Vertical wall) grid
+		for i := -gridSize; i <= gridSize; i++ {
+			for j := -gridSize; j <= gridSize; j++ {
+				p1 := NewPoint3D(float64(i)*gridStep, float64(j)*gridStep, 0)
+				p2 := NewPoint3D(float64(i+1)*gridStep, float64(j)*gridStep, 0)
+				p3 := NewPoint3D(float64(i)*gridStep, float64(j+1)*gridStep, 0)
+				
+				x1, y1 := v.project3DTo2D(p1)
+				x2, y2 := v.project3DTo2D(p2)
+				x3, y3 := v.project3DTo2D(p3)
+				
+				// Only draw if within screen bounds
+				if isVisible(int(x1), int(y1), w, h) && isVisible(int(x2), int(y2), w, h) {
+					drawLine(img, int(x1), int(y1), int(x2), int(y2), xyGridColor)
+				}
+				
+				if isVisible(int(x1), int(y1), w, h) && isVisible(int(x3), int(y3), w, h) {
+					drawLine(img, int(x1), int(y1), int(x3), int(y3), xyGridColor)
+				}
+			}
+		}
+		
+		// 3. YZ Plane (Vertical wall) grid
+		for i := -gridSize; i <= gridSize; i++ {
+			for j := -gridSize; j <= gridSize; j++ {
+				p1 := NewPoint3D(0, float64(i)*gridStep, float64(j)*gridStep)
+				p2 := NewPoint3D(0, float64(i+1)*gridStep, float64(j)*gridStep)
+				p3 := NewPoint3D(0, float64(i)*gridStep, float64(j+1)*gridStep)
+				
+				x1, y1 := v.project3DTo2D(p1)
+				x2, y2 := v.project3DTo2D(p2)
+				x3, y3 := v.project3DTo2D(p3)
+				
+				// Only draw if within screen bounds
+				if isVisible(int(x1), int(y1), w, h) && isVisible(int(x2), int(y2), w, h) {
+					drawLine(img, int(x1), int(y1), int(x2), int(y2), yzGridColor)
+				}
+				
+				if isVisible(int(x1), int(y1), w, h) && isVisible(int(x3), int(y3), w, h) {
+					drawLine(img, int(x1), int(y1), int(x3), int(y3), yzGridColor)
+				}
+			}
+		}
+
+		// Draw prominent coordinate axes
+		origin := NewPoint3D(0, 0, 0)
+		
+		// Make axes longer and add axis labels
+		axisLength := 2.0
+		xAxis := NewPoint3D(axisLength, 0, 0)
+		yAxis := NewPoint3D(0, axisLength, 0)
+		zAxis := NewPoint3D(0, 0, axisLength)
+		
+		// Get 2D coordinates
+		ox, oy := v.project3DTo2D(origin)
+		xx, xy := v.project3DTo2D(xAxis)
+		yx, yy := v.project3DTo2D(yAxis)
+		zx, zy := v.project3DTo2D(zAxis)
+		
+		// Draw thicker axes with more vibrant colors
+		axisThickness := 3
+		
+		// X-axis (bright red)
+		drawThickLine(img, int(ox), int(oy), int(xx), int(xy), color.RGBA{255, 50, 50, 255}, axisThickness)
+		// Y-axis (bright green)
+		drawThickLine(img, int(ox), int(oy), int(yx), int(yy), color.RGBA{50, 255, 50, 255}, axisThickness)
+		// Z-axis (bright blue)
+		drawThickLine(img, int(ox), int(oy), int(zx), int(zy), color.RGBA{50, 50, 255, 255}, axisThickness)
+		
+		// Add axis labels
+		drawString(img, "X", int(xx)+5, int(xy)-5, color.RGBA{255, 0, 0, 255})
+		drawString(img, "Y", int(yx)+5, int(yy)-5, color.RGBA{0, 255, 0, 255})
+		drawString(img, "Z", int(zx)+5, int(zy)-5, color.RGBA{0, 0, 255, 255})
 
 		// Draw points
 		for _, point := range v.space.Points {
@@ -139,56 +359,110 @@ func (v *Visualizer) Run() {
 
 		return img
 	})
+	
+	// Instructions card
+	instructionsCard := widget.NewCard("", "Controls",
+		widget.NewLabel("• Rotate: Left-click + drag\n• Rotate (alternate): Hold R key + scroll wheel\n• Pan: Right-click + drag (or Option/Alt + drag)\n• Zoom: Scroll wheel or pinch gesture"))
 
-	// Controls for rotation
-	xRotSlider := widget.NewSlider(-math.Pi, math.Pi)
-	xRotSlider.OnChanged = func(value float64) {
-		v.xRotation = value
-		canvasObj.Refresh()
-	}
-
-	yRotSlider := widget.NewSlider(-math.Pi, math.Pi)
-	yRotSlider.OnChanged = func(value float64) {
-		v.yRotation = value
-		canvasObj.Refresh()
-	}
-
-	zRotSlider := widget.NewSlider(-math.Pi, math.Pi)
-	zRotSlider.OnChanged = func(value float64) {
-		v.zRotation = value
-		canvasObj.Refresh()
-	}
-
-	scaleSlider := widget.NewSlider(10, 200)
-	scaleSlider.Value = 50
-	scaleSlider.OnChanged = func(value float64) {
-		v.scale = value
-		canvasObj.Refresh()
-	}
-
+	// Reset button
+	resetBtn := widget.NewButton("Reset View", func() {
+		v.xRotation = 0
+		v.yRotation = 0
+		v.zRotation = 0
+		v.scale = 50
+		v.xOffset = 0
+		v.yOffset = 0
+		v.canvasObj.Refresh()
+	})
+	
 	// Layout
-	rotationCard := widget.NewCard("Rotation Controls", "",
-		container.New(layout.NewVBoxLayout(),
-			container.NewPadded(container.New(layout.NewFormLayout(), widget.NewLabel("X:"), xRotSlider)),
-			container.NewPadded(container.New(layout.NewFormLayout(), widget.NewLabel("Y:"), yRotSlider)),
-			container.NewPadded(container.New(layout.NewFormLayout(), widget.NewLabel("Z:"), zRotSlider)),
-		),
+	controls := container.New(layout.NewVBoxLayout(),
+		instructionsCard,
+		resetBtn,
 	)
 
-	scaleCard := widget.NewCard("Display Settings", "",
-		container.NewPadded(container.New(layout.NewFormLayout(), widget.NewLabel("Scale:"), scaleSlider)),
+	// Create a custom canvas wrapper for mouse interaction
+	canvasWrapper := newCanvasWrapper(v.canvasObj, v)
+	
+	// Add keyboard event handler for key press
+	v.window.Canvas().SetOnTypedKey(func(ke *fyne.KeyEvent) {
+		if ke.Name == "R" || ke.Name == "r" {
+			v.rKeyPressed = true
+		}
+	})
+	
+	// Add a goroutine to simulate key releases since Fyne doesn't provide direct access
+	go func() {
+		for {
+			if v.rKeyPressed {
+				// Simulate a key release after a short delay
+				time.Sleep(300 * time.Millisecond)
+				v.rKeyPressed = false
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+	}()
+
+	// Split layout with controls on the right
+	split := container.NewHSplit(
+		canvasWrapper,
+		container.NewPadded(controls),
 	)
+	split.Offset = 0.8 // 80% of space for canvas, 20% for controls
 
-	controls := container.New(layout.NewHBoxLayout(),
-		container.NewPadded(rotationCard),
-		container.NewPadded(scaleCard),
-	)
-
-	content := container.New(layout.NewBorderLayout(nil, controls, nil, nil),
-		canvasObj, controls)
-
-	v.window.SetContent(content)
+	v.window.SetContent(split)
 	v.window.ShowAndRun()
+}
+
+// canvasWrapper is a custom widget that wraps a canvas and handles mouse events
+type canvasWrapper struct {
+	widget.BaseWidget
+	canvas fyne.CanvasObject
+	vis    *Visualizer
+}
+
+// newCanvasWrapper creates a new canvas wrapper
+func newCanvasWrapper(canvas fyne.CanvasObject, vis *Visualizer) *canvasWrapper {
+	w := &canvasWrapper{
+		canvas: canvas,
+		vis:    vis,
+	}
+	w.ExtendBaseWidget(w)
+	return w
+}
+
+// CreateRenderer implements the widget interface
+func (c *canvasWrapper) CreateRenderer() fyne.WidgetRenderer {
+	return widget.NewSimpleRenderer(c.canvas)
+}
+
+// MouseDown implements desktop.Mouseable
+func (c *canvasWrapper) MouseDown(ev *desktop.MouseEvent) {
+	c.vis.handleMouseDown(ev)
+}
+
+// MouseUp implements desktop.Mouseable
+func (c *canvasWrapper) MouseUp(*desktop.MouseEvent) {
+	c.vis.handleMouseUp()
+}
+
+// MouseMoved implements desktop.Mouseable
+func (c *canvasWrapper) MouseMoved(ev *desktop.MouseEvent) {
+	c.vis.handleMouseMove(ev)
+}
+
+// Scrolled implements fyne.Scrollable
+func (c *canvasWrapper) Scrolled(ev *fyne.ScrollEvent) {
+	c.vis.handleScroll(ev)
+}
+
+// Ensure canvasWrapper implements necessary interfaces
+var _ desktop.Mouseable = (*canvasWrapper)(nil)
+var _ fyne.Scrollable = (*canvasWrapper)(nil)
+
+// Helper function to check if a point is visible on screen
+func isVisible(x, y, width, height int) bool {
+	return x >= 0 && x < width && y >= 0 && y < height
 }
 
 // Helper function to draw a line using Bresenham's algorithm
@@ -219,6 +493,22 @@ func drawLine(img *image.RGBA, x1, y1, x2, y2 int, clr color.RGBA) {
 		if e2 < dx {
 			err += dx
 			y1 += sy
+		}
+	}
+}
+
+// Helper function for drawing thicker lines
+func drawThickLine(img *image.RGBA, x1, y1, x2, y2 int, clr color.RGBA, thickness int) {
+	// Draw the main line
+	drawLine(img, x1, y1, x2, y2, clr)
+	
+	// Draw additional lines around the main line for thickness
+	halfThick := thickness / 2
+	for dy := -halfThick; dy <= halfThick; dy++ {
+		for dx := -halfThick; dx <= halfThick; dx++ {
+			if dx*dx + dy*dy <= halfThick*halfThick {
+				drawLine(img, x1+dx, y1+dy, x2+dx, y2+dy, clr)
+			}
 		}
 	}
 }
@@ -360,6 +650,30 @@ func drawString(img *image.RGBA, s string, x, y int, clr color.RGBA) {
 			"     ",
 			"     ",
 		},
+		'X': {
+			"#   #",
+			" # # ",
+			"  #  ",
+			" # # ",
+			"#   #",
+			"     ",
+		},
+		'Y': {
+			"#   #",
+			" # # ",
+			"  #  ",
+			"  #  ",
+			"  #  ",
+			"     ",
+		},
+		'Z': {
+			"#####",
+			"   # ",
+			"  #  ",
+			" #   ",
+			"#####",
+			"     ",
+		},
 	}
 
 	// Set default patterns for any undefined characters
@@ -413,11 +727,6 @@ func drawString(img *image.RGBA, s string, x, y int, clr color.RGBA) {
 			}
 		}
 	}
-}
-
-// drawText measures the width of text
-func drawText(img *image.RGBA, p Point3D, x, y int) int {
-	return len(formatCoord(p)) * 6
 }
 
 func abs(x int) int {
