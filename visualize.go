@@ -4,15 +4,19 @@ import (
 	"fmt"
 	"image"
 	"image/color"
+	"io"
 	"math"
+	"os"
 	"time"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
 	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
+	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/driver/desktop"
 	"fyne.io/fyne/v2/layout"
+	"fyne.io/fyne/v2/storage"
 	"fyne.io/fyne/v2/widget"
 )
 
@@ -393,9 +397,63 @@ func (v *Visualizer) Run() {
 		v.canvasObj.Refresh()
 	})
 	
+	// Upload CSV button
+	uploadBtn := widget.NewButton("Upload CSV", func() {
+		openDialog := dialog.NewFileOpen(func(reader fyne.URIReadCloser, err error) {
+			if err != nil {
+				dialog.ShowError(err, v.window)
+				return
+			}
+			if reader == nil {
+				return // User cancelled
+			}
+			defer reader.Close()
+			
+			// Create a temporary file
+			tempFile, err := os.CreateTemp("", "upload-*.csv")
+			if err != nil {
+				dialog.ShowError(err, v.window)
+				return
+			}
+			defer tempFile.Close()
+			
+			// Copy the uploaded file to the temp file
+			_, err = io.Copy(tempFile, reader)
+			if err != nil {
+				dialog.ShowError(err, v.window)
+				return
+			}
+			
+			// Create new space and load points
+			newSpace := NewSpace3D()
+			err = newSpace.LoadPointsFromCSV(tempFile.Name())
+			if err != nil {
+				dialog.ShowError(err, v.window)
+				return
+			}
+			
+			// Update visualizer with new points
+			v.space = newSpace
+			
+			// Reset view for better visualization
+			v.xRotation = 0
+			v.yRotation = 0
+			v.zRotation = 0
+			v.scale = 50
+			v.xOffset = 0
+			v.yOffset = 0
+			v.canvasObj.Refresh()
+		}, v.window)
+		
+		// Set filter for CSV files
+		openDialog.SetFilter(storage.NewExtensionFileFilter([]string{".csv"}))
+		openDialog.Show()
+	})
+	
 	// Layout
 	controls := container.New(layout.NewVBoxLayout(),
 		instructionsCard,
+		uploadBtn,
 		resetBtn,
 	)
 
