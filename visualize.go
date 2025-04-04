@@ -374,22 +374,6 @@ func (v *Visualizer) Run() {
 			}
 		}
 
-		// Draw a cursor indicator to show where the mouse is being tracked
-		cursorSize := 5
-		for y := -cursorSize; y <= cursorSize; y++ {
-			for x := -cursorSize; x <= cursorSize; x++ {
-				if x*x+y*y <= cursorSize*cursorSize {
-					px, py := int(v.hoverX)+x, int(v.hoverY)+y
-					if px >= 0 && px < w && py >= 0 && py < h {
-						img.Set(px, py, color.RGBA{255, 0, 0, 255})
-					}
-				}
-			}
-		}
-
-		// Draw hover position text
-		hoverText := fmt.Sprintf("Mouse: %.1f, %.1f", v.hoverX, v.hoverY)
-		drawString(img, hoverText, 10, 10, color.RGBA{0, 0, 0, 255})
 
 		return img
 	})
