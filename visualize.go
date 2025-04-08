@@ -7,6 +7,7 @@ import (
 	"io"
 	"math"
 	"os"
+	"strconv"
 	"time"
 
 	"fyne.io/fyne/v2"
@@ -450,8 +451,103 @@ func (v *Visualizer) Run() {
 		openDialog.Show()
 	})
 	
+	// Function input form
+	functionCard := widget.NewCard("", "Generate Function", nil)
+	
+	// Function expression input
+	functionEntry := widget.NewEntry()
+	functionEntry.SetPlaceHolder("e.g., sin(x) * cos(y)")
+	functionEntry.SetText("sin(x) * cos(y)")
+	
+	// Range inputs
+	xMinEntry := widget.NewEntry()
+	xMinEntry.SetText("-3")
+	xMaxEntry := widget.NewEntry()
+	xMaxEntry.SetText("3")
+	
+	yMinEntry := widget.NewEntry()
+	yMinEntry.SetText("-3")
+	yMaxEntry := widget.NewEntry()
+	yMaxEntry.SetText("3")
+	
+	stepEntry := widget.NewEntry()
+	stepEntry.SetText("0.1")
+	
+	// Function generate button
+	generateBtn := widget.NewButton("Generate Points", func() {
+		// Parse function and range parameters
+		functionStr := functionEntry.Text
+		
+		// Parse range values with error handling
+		parseFloat := func(s string, defaultVal float64) float64 {
+			val, err := strconv.ParseFloat(s, 64)
+			if err != nil {
+				dialog.ShowError(fmt.Errorf("Invalid number: %s", s), v.window)
+				return defaultVal
+			}
+			return val
+		}
+		
+		xMin := parseFloat(xMinEntry.Text, -3)
+		xMax := parseFloat(xMaxEntry.Text, 3)
+		yMin := parseFloat(yMinEntry.Text, -3)
+		yMax := parseFloat(yMaxEntry.Text, 3)
+		step := parseFloat(stepEntry.Text, 0.1)
+		
+		if step <= 0 {
+			dialog.ShowError(fmt.Errorf("Step size must be positive"), v.window)
+			return
+		}
+		
+		if xMin >= xMax || yMin >= yMax {
+			dialog.ShowError(fmt.Errorf("Min values must be less than max values"), v.window)
+			return
+		}
+		
+		// Create new space
+		newSpace := NewSpace3D()
+		
+		// Generate points
+		err := GeneratePointsFromFunction(newSpace, functionStr, xMin, xMax, yMin, yMax, step)
+		if err != nil {
+			dialog.ShowError(fmt.Errorf("Error generating points: %v", err), v.window)
+			return
+		}
+		
+		// Update visualizer with new points
+		v.space = newSpace
+		
+		// Reset view for better visualization
+		v.xRotation = 0
+		v.yRotation = 0
+		v.zRotation = 0
+		v.scale = 50
+		v.xOffset = 0
+		v.yOffset = 0
+		v.canvasObj.Refresh()
+		
+		// Show success message
+		dialog.ShowInformation("Success", fmt.Sprintf("Generated %d points", len(newSpace.Points)), v.window)
+	})
+	
+	// Arrange function inputs in a form
+	functionForm := container.New(layout.NewFormLayout(),
+		widget.NewLabel("Function:"), functionEntry,
+		widget.NewLabel("X Min:"), xMinEntry,
+		widget.NewLabel("X Max:"), xMaxEntry,
+		widget.NewLabel("Y Min:"), yMinEntry,
+		widget.NewLabel("Y Max:"), yMaxEntry,
+		widget.NewLabel("Step:"), stepEntry,
+	)
+	
+	functionCard.SetContent(container.New(layout.NewVBoxLayout(),
+		functionForm,
+		generateBtn,
+	))
+
 	// Layout
 	controls := container.New(layout.NewVBoxLayout(),
+		functionCard,
 		instructionsCard,
 		uploadBtn,
 		resetBtn,

@@ -59,6 +59,12 @@ func main() {
 	// Command line flags
 	csvFile := flag.String("csv", "", "Path to CSV file with 3D points")
 	generateSample := flag.String("generate", "", "Generate a sample CSV file at the specified path")
+	functionStr := flag.String("function", "", "Mathematical function to visualize (e.g., 'sin(x) * cos(y)')")
+	xMin := flag.Float64("xmin", -5.0, "Minimum x value for function visualization")
+	xMax := flag.Float64("xmax", 5.0, "Maximum x value for function visualization")
+	yMin := flag.Float64("ymin", -5.0, "Minimum y value for function visualization")
+	yMax := flag.Float64("ymax", 5.0, "Maximum y value for function visualization")
+	step := flag.Float64("step", 0.2, "Step size for function visualization")
 
 	flag.Parse()
 
@@ -75,8 +81,18 @@ func main() {
 	// Create a 3D space
 	space := NewSpace3D()
 
+	// Check if function visualization is requested
+	if *functionStr != "" {
+		fmt.Printf("Generating points from function: %s\n", *functionStr)
+		fmt.Printf("Range: x=[%.2f, %.2f], y=[%.2f, %.2f], step=%.2f\n", *xMin, *xMax, *yMin, *yMax, *step)
+		
+		if err := GeneratePointsFromFunction(space, *functionStr, *xMin, *xMax, *yMin, *yMax, *step); err != nil {
+			log.Fatalf("Error generating points from function: %v", err)
+		}
+		
+		fmt.Printf("Generated %d points from function\n", len(space.Points))
 	// Load points from CSV if provided
-	if *csvFile != "" {
+	} else if *csvFile != "" {
 		fmt.Printf("Loading points from CSV file: %s\n", *csvFile)
 		if err := space.LoadPointsFromCSV(*csvFile); err != nil {
 			log.Fatalf("Error loading CSV file: %v", err)
@@ -84,7 +100,7 @@ func main() {
 		fmt.Printf("Loaded %d points from CSV\n", len(space.Points))
 	} else {
 		// Add some default points if no CSV provided
-		fmt.Println("No CSV file specified, using default points")
+		fmt.Println("No function or CSV file specified, using default points")
 		p1 := NewPoint3D(0, 0, 0)
 		p2 := NewPoint3D(3, 4, 0)
 		p3 := NewPoint3D(3, 4, 5)
